@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DeepSeek API 可行性验证</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 760px; margin: 24px auto; padding: 0 16px; background: #111; color: #eee; }
+  h2 { margin-bottom: 4px; }
+  .desc { color: #aaa; font-size: 13px; }
+  label { display: block; margin: 12px 0 4px; font-size: 13px; color: #ccc; }
+  input { width: 100%; padding: 8px; box-sizing: border-box; background: #222; color: #eee; border: 1px solid #444; border-radius: 6px; }
+  button { margin: 6px 6px 0 0; padding: 8px 16px; cursor: pointer; border: 1px solid #555; border-radius: 6px; background: #333; color: #eee; }
+  button:hover { background: #444; }
+  #log { background: #000; color: #0f0; padding: 12px; border-radius: 8px; white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height: 1.5; max-height: 55vh; overflow-y: auto; margin-top: 16px; }
+  .ok { color: #5f5; }
+  .bad { color: #f55; }
+  .warn { color: #ff5; }
+  .dim { color: #888; }
+</style>
+</head>
+<body>
+<h2>DeepSeek API 可行性验证</h2>
+<p class="desc">
+  纯前端 PWA 方案的门禁测试。测试 3 需要 <b>deepseek-reasoner</b> 模型可用。
+  若模型 ID 已失效（报 model not found），可改下方模型名重试。
+</p>
+
+<label>API Key（仅存于本页，不会外发）</label>
+<input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+
+<label>reasoner 模型 ID（测试 3 用）</label>
+<input id="model" type="text" value="deepseek-v4-flash" />
+
+<div>
+  <button onclick="test1()">测试1 · CORS 连通性</button>
+  <button onclick="test2()">测试2 · 流式 include_usage</button>
+  <button onclick="test3()">测试3 · reasoning_content 回传</button>
+  <button onclick="clearLog()" style="color:#ccc">清空</button>
+</div>
+<div id="log"></div>
+
+<script>
+const BASE = 'https://api.deepseek.com';
+const logEl = document.getElementById('log');
+const key = () => document.getElementById('apiKey').value.trim();
+const reasonerModel = () => document.getElementById('model').value.trim();
+
+function log(msg, cls) {
+  const line = document.createElement('div');
+  line.className = cls || '';
+  const t = new Date().toLocaleTimeString();
+  line.textContent = `[${t}] ${msg}`;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function clearLog() { logEl.innerHTML = ''; }
+
+async function postChat(body) {
+  const res = await fetch(`${BASE}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${key()}`,
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  return { ok: res.ok, status: res.status, text };
+}
+
+// ---------- 测试 1：CORS 连通性 ----------
+async function test1() {
+  if (!key()) return log('请先填入 API Key', 'bad');
+  log('测试1：发送最小请求（非流式，max_tokens=1）…');
+  try {
+    const { ok, status, text } = await postChat({
+      model: 'deepseek-v4-flash',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 1,
+      stream: false,
+    });
+    log(`HTTP ${status}`, ok ? 'ok' : 'bad');
+    if (ok) {
+      const j = JSON.parse(text);
+      const content = j.choices?.[0]?.message?.content;
+      log(`✅ 请求成功。回复：${JSON.stringify(content)}`, 'ok');
+      log(`usage：${JSON.stringify(j.usage)}`);
+      log(`结论：CORS 放行，纯前端直连可行`, 'ok');
+    } else {
+      log(`❌ 响应体：${text.slice(0, 300)}`, 'bad');
+      log('结论：请求可达但被服务端拒绝（多为 Key/模型问题），非 CORS 问题', 'warn');
+    }
+  } catch (e) {
+    log(`❌ 失败：${e}`, 'bad');
+    log('说明：若为 "Failed to fetch" / TypeError，几乎可断定 CORS 被拦截（服务器未返回 Access-Control-Allow-Origin），需走本地代理回退方案', 'bad');
+  }
+}
+
+// ---------- 测试 2：流式 include_usage ----------
+async function test2() {
+  if (!key()) return log('请先填入 API Key', 'bad');
+  log('测试2：流式请求，stream_options.include_usage=true …');
+  try {
+    const res = await fetch(`${BASE}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${key()}`,
+      },
+      body: JSON.stringify({
+        model: 'deepseek-v4-flash',
+        messages: [{ role: 'user', content: '用一句话介绍你自己' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    });
+    if (!res.ok) {
+      log(`HTTP ${res.status}：${(await res.text()).slice(0, 200)}`, 'bad');
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let contentLen = 0;
+    let gotUsage = false;
+    let lastUsage = null;
+    let chunkCount = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() ?? '';
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t.startsWith('data:')) continue;
+        const payload = t.slice(5).trim();
+        if (payload === '[DONE]') continue;
+        try {
+          const j = JSON.parse(payload);
+          chunkCount++;
+          const delta = j.choices?.[0]?.delta;
+          if (delta?.content) contentLen += delta.content.length;
+          if (j.usage) { gotUsage = true; lastUsage = j.usage; }
+        } catch (e) { /* 半行，忽略 */ }
+      }
+    }
+    log(`收到 ${chunkCount} 个 chunk，正文 ${contentLen} 字符`);
+    if (gotUsage) {
+      log(`✅ 流式末尾收到 usage：${JSON.stringify(lastUsage)}`, 'ok');
+      log('结论：费用追踪数据源可用', 'ok');
+    } else {
+      log('❌ 完整流式结束仍未收到 usage', 'bad');
+      log('说明：include_usage 未生效或 DeepSeek 流式不支持返回 usage，需考虑另取费用数据', 'bad');
+    }
+  } catch (e) {
+    log(`❌ 失败：${e}`, 'bad');
+  }
+}
+
+// ---------- 测试 3：reasoning_content 回传 ----------
+async function test3() {
+  if (!key()) return log('请先填入 API Key', 'bad');
+  const model = reasonerModel();
+  log(`测试3：模型=${model}，两轮对话验证 reasoning_content 回传规则`);
+  log('第一轮：非流式请求（拿 reasoning_content + content）…');
+  let r1;
+  try {
+    r1 = await postChat({
+      model,
+      messages: [{ role: 'user', content: '1+1等于几？' }],
+      stream: false,
+    });
+  } catch (e) {
+    return log(`❌ 第一轮网络失败：${e}`, 'bad');
+  }
+  if (!r1.ok) {
+    log(`❌ 第一轮 HTTP ${r1.status}：${r1.text.slice(0, 300)}`, 'bad');
+    if (/model/i.test(r1.text)) log('提示：模型 ID 可能已失效，请在页面上方修改', 'warn');
+    return;
+  }
+  const j1 = JSON.parse(r1.text);
+  const msg1 = j1.choices?.[0]?.message || {};
+  const reasoning1 = msg1.reasoning_content;
+  const content1 = msg1.content;
+  log(`第一轮成功。content=${JSON.stringify(content1)}`);
+  log(`reasoning_content：${reasoning1 ? `有（${reasoning1.length} 字符）` : '无'}`, reasoning1 ? 'ok' : 'warn');
+
+  // 3a：assistant 只回传 content
+  log('— 3a：assistant 仅回传 content —');
+  const r2a = await postChat({
+    model,
+    messages: [
+      { role: 'user', content: '1+1等于几？' },
+      { role: 'assistant', content: content1 ?? '' },
+      { role: 'user', content: '那2+2等于几？' },
+    ],
+    stream: false,
+  });
+  if (r2a.ok) {
+    const j2a = JSON.parse(r2a.text);
+    log(`✅ 3a 成功。第二轮回答：${JSON.stringify(j2a.choices?.[0]?.message?.content)}`, 'ok');
+  } else {
+    log(`❌ 3a HTTP ${r2a.status}：${r2a.text.slice(0, 300)}`, 'bad');
+  }
+
+  // 3b：assistant 携带 reasoning_content
+  log('— 3b：assistant 携带 reasoning_content 回传 —');
+  const r2b = await postChat({
+    model,
+    messages: [
+      { role: 'user', content: '1+1等于几？' },
+      { role: 'assistant', content: content1 ?? '', reasoning_content: reasoning1 ?? '' },
+      { role: 'user', content: '那2+2等于几？' },
+    ],
+    stream: false,
+  });
+  if (r2b.ok) {
+    const j2b = JSON.parse(r2b.text);
+    log(`✅ 3b 成功。第二轮回答：${JSON.stringify(j2b.choices?.[0]?.message?.content)}`, 'ok');
+    log('结论：reasoning_content 可回传（历史中可含该字段）', 'ok');
+  } else {
+    log(`❌ 3b HTTP ${r2b.status}：${r2b.text.slice(0, 300)}`, 'bad');
+    log('结论：reasoning_content 不应回传（历史中请仅传 content）', 'warn');
+  }
+  log('综合：根据 3a/3b 结果确定思维链是否进上下文', 'warn');
+}
+</script>
+</body>
+</html>

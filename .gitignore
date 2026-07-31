@@ -1,0 +1,17 @@
+# 依赖与构建产物（CI 中 npm ci + build 生成）
+node_modules
+dist
+
+# 本地环境
+*.local
+.env
+.env.*
+!.env.example
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.log
