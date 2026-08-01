@@ -4,10 +4,11 @@ import {
   childrenOf,
   collectSubtreeIds,
   createNode,
+  deleteRound,
   deleteSubtree,
   editAssistantNode,
   editUserNode,
-  extendPath,
+  followLatestBranch,
   pathToNode,
   refreshAssistant,
   replyToUser,
@@ -104,6 +105,77 @@ describe('删除 → 级联子树', () => {
   })
 })
 
+describe('deleteRound → 轮次删除（接续后续对话）', () => {
+  it('U1→A1→U2→A2→U3→A3：删除 U1 后 U2 提到根层', () => {
+    // 构建线性链
+    let nodes: NodeMap = {}
+    nodes = appendTo(nodes, user('U1', null, '第一问', nodes))
+    nodes = appendTo(nodes, asst('A1', 'U1', '第一答', nodes))
+    nodes = appendTo(nodes, user('U2', 'A1', '第二问', nodes))
+    nodes = appendTo(nodes, asst('A2', 'U2', '第二答', nodes))
+    nodes = appendTo(nodes, user('U3', 'A2', '第三问', nodes))
+    nodes = appendTo(nodes, asst('A3', 'U3', '第三答', nodes))
+
+    const after = deleteRound(nodes, 'U1')
+    // U1 和 A1 被删
+    expect(after.U1).toBeUndefined()
+    expect(after.A1).toBeUndefined()
+    // U2 存活，parentId 变为 null
+    expect(after.U2).toBeDefined()
+    expect(after.U2.parentId).toBeNull()
+    // U2→A2→U3→A3 完整保留
+    expect(after.A2.parentId).toBe('U2')
+    expect(after.U3.parentId).toBe('A2')
+    expect(after.A3.parentId).toBe('U3')
+  })
+
+  it('删除中间 user（U2）：U1→A1 保留，U3→A3 挂到 A1 下', () => {
+    let nodes: NodeMap = {}
+    nodes = appendTo(nodes, user('U1', null, '第一问', nodes))
+    nodes = appendTo(nodes, asst('A1', 'U1', '第一答', nodes))
+    nodes = appendTo(nodes, user('U2', 'A1', '第二问', nodes))
+    nodes = appendTo(nodes, asst('A2', 'U2', '第二答', nodes))
+    nodes = appendTo(nodes, user('U3', 'A2', '第三问', nodes))
+
+    const after = deleteRound(nodes, 'U2')
+    expect(after.U1).toBeDefined()
+    expect(after.A1).toBeDefined()
+    expect(after.U2).toBeUndefined()
+    expect(after.A2).toBeUndefined()
+    expect(after.U3).toBeDefined()
+    expect(after.U3.parentId).toBe('A1') // 向上接续
+  })
+
+  it('分支场景：删除 U1 不影响 U2 的子树（U2 同级分支完好）', () => {
+    // 编辑产生分支：U1 和 U2 都是根节点
+    let nodes: NodeMap = {}
+    nodes = appendTo(nodes, user('U1', null, '第一问', nodes))
+    nodes = appendTo(nodes, asst('A1', 'U1', '第一答', nodes))
+    nodes = appendTo(nodes, user('U3', 'A1', '追问', nodes))
+    nodes = appendTo(nodes, asst('A3', 'U3', '追问答', nodes))
+    // U2 是同父兄弟（编辑 U1 产生），下面有 A2→U4→A4
+    nodes = appendTo(nodes, user('U2', null, '第一问改', nodes))
+    nodes = appendTo(nodes, asst('A2', 'U2', '第二答', nodes))
+    nodes = appendTo(nodes, user('U4', 'A2', '继续', nodes))
+    nodes = appendTo(nodes, asst('A4', 'U4', '继续答', nodes))
+
+    const after = deleteRound(nodes, 'U1')
+    // U1、A1 被删
+    expect(after.U1).toBeUndefined()
+    expect(after.A1).toBeUndefined()
+    // U3 重新挂到根
+    expect(after.U3).toBeDefined()
+    expect(after.U3.parentId).toBeNull()
+    expect(after.A3.parentId).toBe('U3')
+    // U2 的整棵子树完全不受影响
+    expect(after.U2).toBeDefined()
+    expect(after.U2.parentId).toBeNull()
+    expect(after.A2.parentId).toBe('U2')
+    expect(after.U4.parentId).toBe('A2')
+    expect(after.A4.parentId).toBe('U4')
+  })
+})
+
 describe('pathToNode 与 resolveInitialPath', () => {
   it('pathToNode 从节点向上到根', () => {
     const nodes = buildStandardTree()
@@ -118,37 +190,55 @@ describe('pathToNode 与 resolveInitialPath', () => {
   })
 })
 
-describe('切换版本与候选行（停在节点、手动再选）', () => {
-  it('切换中间 user 节点 → 路径截断，子节点成为候选', () => {
-    // 场景：编辑 U1→U2，path=[U2,R2]，再切回 U1
+describe('followLatestBranch', () => {
+  it('沿最新子节点走到叶子', () => {
+    const base = buildStandardTree()
+    expect(followLatestBranch(base, 'U1')).toEqual(['R1b']) // R1b 是 versionIndex 最大的
+  })
+  it('叶子节点返回空数组', () => {
+    const base = buildStandardTree()
+    expect(followLatestBranch(base, 'R1b')).toEqual([])
+  })
+})
+
+describe('切换版本（auto-extend 到叶子）', () => {
+  it('切换到同父 AI 版本 → 无子节点，不延伸', () => {
+    const base = buildStandardTree()
+    const view = switchVersion(base, ['U1', 'R1b'], 'R1a')
+    expect(view.path).toEqual(['U1', 'R1a'])
+    expect(view.candidates).toEqual([]) // R1a 无子节点
+  })
+
+  it('切换到中间节点 → 自动沿最新子链走到叶子', () => {
+    // 构建：root → U1 → R1a → U2 → R2, R3(version 2)
+    let nodes: NodeMap = {}
+    nodes = appendTo(nodes, user('U1', null, 'q1', nodes))
+    nodes = appendTo(nodes, asst('R1a', 'U1', 'a1', nodes))
+    nodes = appendTo(nodes, user('U2', 'R1a', 'q2', nodes))
+    nodes = appendTo(nodes, asst('R2', 'U2', 'a2v1', nodes))
+    nodes = appendTo(nodes, asst('R3', 'U2', 'a2v2', nodes))
+
+    // 目前路径：U1→R1a→U2→R3
+    const view = switchVersion(nodes, ['U1', 'R1a', 'U2', 'R3'], 'U1')
+    // U1 无更深的子节点（只到 R1a），followLatestBranch 从 R1a 走到 R3
+    expect(view.path).toEqual(['U1', 'R1a', 'U2', 'R3'])
+    expect(view.candidates).toEqual([]) // 已是叶子
+  })
+
+  it('编辑后切回旧 user 版本 → 自动沿其最新子链走到叶子', () => {
+    // 场景：编辑 U1→U2，path=[U2,R2]，切回 U1
     let nodes = buildStandardTree()
     const edit = editUserNode(nodes, 'U1', 'A\'')
     nodes = edit.nodes
     const u2 = edit.newNodeId
     let p = replyToUser(nodes, [u2], u2)
     nodes = p.nodes
-    expect(p.path).toEqual([u2, p.assistantId])
 
-    // 切回 U1
+    // 切回 U1 → auto-extend 到 R1b
     const view = switchVersion(nodes, p.path, 'U1')
-    expect(view.path).toEqual(['U1'])
-    expect(view.tailId).toBe('U1')
-    // 候选 = U1 的直接子节点（a、b）
-    expect(view.candidates.map((n) => n.id)).toEqual(['R1a', 'R1b'])
-  })
-
-  it('沿候选延伸：选 R1b 恢复 A+b 分支', () => {
-    const base = buildStandardTree()
-    const view = switchVersion(base, ['U1', 'R1b'], 'U1') // 停在 U1
-    const extended = extendPath(base, view.path, 'R1b')
-    expect(extended.path).toEqual(['U1', 'R1b'])
-    expect(extended.candidates).toEqual([])
-  })
-
-  it('切换 AI 版本：R1b → R1a', () => {
-    const base = buildStandardTree()
-    const view = switchVersion(base, ['U1', 'R1b'], 'R1a')
-    expect(view.path).toEqual(['U1', 'R1a'])
+    expect(view.path).toEqual(['U1', 'R1b'])
+    expect(view.tailId).toBe('R1b')
+    expect(view.candidates).toEqual([])
   })
 })
 
@@ -188,7 +278,7 @@ describe('触发 AI 回复 replyToUser', () => {
 })
 
 describe('完整分支场景（先刷新 AI，再修改用户输入）', () => {
-  it('编辑 U1→U2 后，通过版本指示器完整恢复 A+b 分支', () => {
+  it('编辑 U1→U2 后，切换回 U1 → 自动恢复到 A+b（最新分支）', () => {
     let nodes = buildStandardTree()
     // 编辑 U1 → U2(A')
     const edit = editUserNode(nodes, 'U1', 'A\'')
@@ -198,14 +288,11 @@ describe('完整分支场景（先刷新 AI，再修改用户输入）', () => {
     nodes = p.nodes
     expect(p.path).toEqual([edit.newNodeId, p.assistantId])
 
-    // 用户想恢复 "A + b"：点 U1 版本指示器 → 停在 U1 → 候选 a/b
+    // 切回 U1 → 自动沿最新子链走到 R1b（不再需要手动点候选）
     const v1 = switchVersion(nodes, p.path, 'U1')
-    expect(v1.path).toEqual(['U1'])
-    expect(v1.candidates.map((n) => n.content)).toEqual(['a', 'b'])
-
-    // 点候选 b → 完整恢复 A+b
-    const v2 = extendPath(nodes, v1.path, 'R1b')
-    expect(v2.path).toEqual(['U1', 'R1b'])
+    expect(v1.path).toEqual(['U1', 'R1b'])
+    expect(v1.tailId).toBe('R1b')
+    expect(v1.candidates).toEqual([])
 
     // 旧分支 U2→c 数据保留
     expect(nodes[edit.newNodeId]).toBeDefined()

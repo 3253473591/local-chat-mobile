@@ -2,6 +2,9 @@
 node_modules
 dist
 
+# 本地下载的 APK 产物（云端构建，不入库）
+app-debug.apk
+
 # 本地环境
 *.local
 .env

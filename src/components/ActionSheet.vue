@@ -25,7 +25,7 @@ function onItemClick(index: number) {
     <Transition name="slide-up">
       <div
         v-if="ui.actionSheetVisible"
-        class="fixed inset-x-0 bottom-0 z-50 mx-auto max-w-[430px] rounded-t-xl bg-white pb-4 safe-bottom"
+        class="safe-area-bottom fixed inset-x-0 bottom-0 z-50 rounded-t-xl bg-white pb-4"
       >
         <div class="flex flex-col p-2">
           <button
@@ -52,9 +52,6 @@ function onItemClick(index: number) {
 </template>
 
 <style scoped>
-.safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom);
-}
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.2s;

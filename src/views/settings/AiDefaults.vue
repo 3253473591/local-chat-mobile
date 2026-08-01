@@ -16,6 +16,13 @@ const tempInput = computed({
   },
 })
 
+const topPInput = computed({
+  get: () => (settingsStore.settings.topP === null ? '' : String(settingsStore.settings.topP)),
+  set: (v: string) => {
+    settingsStore.settings.topP = v === '' ? null : Number(v)
+  },
+})
+
 function editPrompt() {
   uiStore.openEditor({
     title: '全局提示词',
@@ -72,7 +79,7 @@ function editRegex() {
             type="number"
             min="0"
             max="20"
-            class="w-20 bg-transparent py-2 text-right text-[15px] outline-none"
+            class="min-w-0 flex-1 bg-transparent py-2 text-right text-[15px] outline-none"
           />
         </div>
         <div class="setting-row flex min-h-13 items-center gap-3 px-4">
@@ -88,21 +95,41 @@ function editRegex() {
           >
             <option value="low">low（浅）</option>
             <option value="high">high（默认）</option>
+            <option value="xhigh">xhigh（pro → max）</option>
             <option value="max">max（深）</option>
           </select>
         </div>
-        <div class="setting-row flex min-h-13 items-center gap-3 px-4">
-          <label class="shrink-0 text-[15px] text-ink">温度</label>
-          <input
-            v-model="tempInput"
-            type="number"
-            min="0"
-            max="2"
-            step="0.1"
-            placeholder="默认"
-            class="w-20 bg-transparent py-2 text-right text-[15px] outline-none"
-          />
-          <span class="text-xs text-sub">留空 = 默认</span>
+        <template v-if="!settingsStore.settings.thinkingEnabled">
+          <div class="setting-row flex min-h-13 items-center gap-3 px-4">
+            <label class="shrink-0 text-[15px] text-ink">温度</label>
+            <span class="text-xs text-sub">留空 = 默认</span>
+            <input
+              v-model="tempInput"
+              type="number"
+              min="0"
+              max="2"
+              step="0.1"
+              placeholder="默认"
+              class="min-w-0 flex-1 bg-transparent py-2 text-right text-[15px] outline-none"
+            />
+          </div>
+          <div class="setting-row flex min-h-13 items-center gap-3 px-4">
+            <label class="shrink-0 text-[15px] text-ink">top_p</label>
+            <span class="text-xs text-sub">0~1，留空 = 默认</span>
+            <input
+              v-model="topPInput"
+              type="number"
+              min="0"
+              max="1"
+              step="0.1"
+              placeholder="默认"
+              class="min-w-0 flex-1 bg-transparent py-2 text-right text-[15px] outline-none"
+            />
+          </div>
+        </template>
+        <div v-else class="setting-row flex min-h-13 items-center gap-3 px-4">
+          <span class="shrink-0 text-[15px] text-ink">温度 / top_p</span>
+          <span class="flex-1 text-right text-xs text-sub">思考模式下不生效</span>
         </div>
       </SettingGroup>
     </main>

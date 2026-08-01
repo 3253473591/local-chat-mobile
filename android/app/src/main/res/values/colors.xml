@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与 PWA 主题色 #EDEDED 保持一致 -->
+    <color name="colorPrimary">#FFEDEDED</color>
+    <color name="colorPrimaryDark">#FFEDEDED</color>
+    <color name="colorAccent">#FF576B95</color>
+</resources>

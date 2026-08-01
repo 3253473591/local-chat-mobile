@@ -142,6 +142,40 @@ export function deleteSubtree(nodes: NodeMap, rootId: string): NodeMap {
   return next
 }
 
+/**
+ * 删除一个"对话轮次"（user + 其所有 assistant 子节点），后续节点向上接续。
+ * - user 节点自身被删除
+ * - user 的所有 assistant 子节点（含多个版本）被删除
+ * - 每个 assistant 子节点的子节点（user）的 parentId 改为 user 的 parentId
+ *
+ * 例：U1→A1→U2→A2→U3→A3，删除 U1：
+ *   U1、A1 被删，U2.parentId = null → 对话变成 U2→A2→U3→A3
+ */
+export function deleteRound(nodes: NodeMap, userId: string): NodeMap {
+  const user = nodes[userId]
+  if (!user) throw new Error('node not found')
+  const next = { ...nodes }
+
+  // 收集所有 assistant 子节点（含版本）
+  const assistants = childrenOf(nodes, userId).filter((n) => n.role === 'assistant')
+
+  // 所有 assistant 的子节点 → 重新挂到 user 的父节点
+  for (const a of assistants) {
+    for (const gc of childrenOf(nodes, a.id)) {
+      const rehomed: MessageNode = { ...gc, parentId: user.parentId, updatedAt: Date.now() }
+      next[gc.id] = rehomed
+    }
+  }
+
+  // 删除 user + 所有 assistant 子节点
+  delete next[userId]
+  for (const a of assistants) {
+    delete next[a.id]
+  }
+
+  return next
+}
+
 /** 从节点向上到根，返回 根→节点 路径 */
 export function pathToNode(nodes: NodeMap, nodeId: string): string[] {
   const path: string[] = []
@@ -186,16 +220,33 @@ export interface PathView {
 }
 
 /**
- * 切换版本：在 path 中定位与 target 同父的兄弟节点，替换为 target，并截断其后。
- * 尾部节点的直接子节点作为候选行返回（"停在节点、手动再选"）。
+ * 从节点出发，逐级取 versionIndex 最大的子节点，递归走到叶子。
+ */
+export function followLatestBranch(nodes: NodeMap, fromId: string): string[] {
+  const result: string[] = []
+  let cur = fromId
+  for (;;) {
+    const kids = childrenOf(nodes, cur)
+    if (kids.length === 0) break
+    cur = kids[kids.length - 1].id
+    result.push(cur)
+  }
+  return result
+}
+
+/**
+ * 切换版本：在 path 中定位与 target 同父的兄弟节点，替换为 target，
+ * 然后自动跟随最新子节点走到叶子（不再"停在节点、手动再选"）。
  */
 export function switchVersion(nodes: NodeMap, path: string[], targetVersionId: string): PathView {
   const target = nodes[targetVersionId]
   if (!target) throw new Error('target node not found')
   const idx = path.findIndex((id) => nodes[id]?.parentId === target.parentId)
   if (idx === -1) throw new Error('no sibling of target in current path')
-  const newPath = [...path.slice(0, idx), targetVersionId]
-  return { path: newPath, tailId: targetVersionId, candidates: childrenOf(nodes, targetVersionId) }
+  // 截断 + 替换 + 自动沿最新分支走到叶子
+  const newPath = [...path.slice(0, idx), targetVersionId, ...followLatestBranch(nodes, targetVersionId)]
+  const tailId = newPath[newPath.length - 1]
+  return { path: newPath, tailId, candidates: childrenOf(nodes, tailId) }
 }
 
 /** 沿候选继续：path 追加候选节点（候选必须是当前尾部的直接子节点） */

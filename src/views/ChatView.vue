@@ -7,13 +7,28 @@ import MessageBubble from '../components/MessageBubble.vue'
 import { childrenOf } from '../core/tree'
 import { useConversationStore } from '../stores/conversation'
 import { useSettingsStore } from '../stores/settings'
+import { useUIStore } from '../stores/ui'
 
 const route = useRoute()
 const router = useRouter()
 const convStore = useConversationStore()
 const settingsStore = useSettingsStore()
+const uiStore = useUIStore()
 
 const bottomRef = ref<HTMLElement | null>(null)
+const scrollRef = ref<HTMLElement | null>(null)
+/** 是否位于底部附近（决定流式输出时是否自动跟随） */
+const nearBottom = ref(true)
+/** 流式结束时用户不在底部 → 显示"到底部"按钮 */
+const streamEndedWhileAway = ref(false)
+const NEAR_BOTTOM_THRESHOLD = 100
+
+function updateNearBottom() {
+  const el = scrollRef.value
+  if (!el) return
+  nearBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_THRESHOLD
+  if (nearBottom.value) streamEndedWhileAway.value = false
+}
 
 onMounted(async () => {
   const id = route.params.id as string
@@ -51,15 +66,45 @@ function scrollToBottom(instant = false) {
   })
 }
 
-// 路径变化 / 流式内容变化时滚动到底部
+function onJumpDown() {
+  streamEndedWhileAway.value = false
+  nearBottom.value = true
+  scrollToBottom(true)
+}
+
+/** 未在底部且流式输出中 / 刚流式结束时，显示"到底部"悬浮按钮 */
+const showJumpDown = computed(
+  () => !nearBottom.value && (convStore.isStreaming || streamEndedWhileAway.value),
+)
+
+// 路径变化 / 流式开始 / 流式结束：分情况滚动
 watch(
-  () => [
-    JSON.stringify(convStore.activePath),
-    convStore.isStreaming,
-    convStore.streamingNodeId,
-    convStore.streamingNodeId ? convStore.nodes[convStore.streamingNodeId]?.content ?? '' : '',
-  ],
-  () => scrollToBottom(),
+  () => [JSON.stringify(convStore.activePath), convStore.streamingNodeId],
+  ([pathStr, sid], [oldPathStr, oldSid]) => {
+    const started = Boolean(sid) && sid !== oldSid
+    const ended = !sid && Boolean(oldSid)
+    if (started) {
+      scrollToBottom() // 刚发送消息 / 刷新 → 跟随到底
+      return
+    }
+    if (ended) {
+      // 流式结束：在底部则归位；上滑阅读中则不打扰
+      if (nearBottom.value) scrollToBottom(true)
+      else streamEndedWhileAway.value = true
+      return
+    }
+    if (!sid && pathStr !== oldPathStr) {
+      scrollToBottom() // 切换版本 / 延伸 / 删除等路径变化
+    }
+  },
+)
+
+// 流式内容增长：仅在用户位于底部附近时自动跟随（上滑阅读时不被拉扯）
+watch(
+  () => (convStore.streamingNodeId ? convStore.nodes[convStore.streamingNodeId]?.content ?? '' : ''),
+  () => {
+    if (nearBottom.value && convStore.isStreaming) scrollToBottom(true)
+  },
 )
 
 function onSelectVersion(id: string) {
@@ -85,15 +130,28 @@ const aiAvatar = computed(() => {
 function openEnhance() {
   router.push(`/chat/${route.params.id}/enhance`)
 }
+
+async function handleClearChat() {
+  if (!window.confirm('清空当前对话的全部消息（不可恢复）？')) return
+  await convStore.clearConversation()
+  uiStore.showToast('已清空')
+}
 </script>
 
 <template>
-  <div class="flex h-full flex-col">
+  <div class="relative flex h-full flex-col">
     <HeaderBar :title="currentTitle">
       <template #left>
         <button class="px-1 text-[17px] text-ink active:opacity-60" aria-label="返回" @click="goHome">‹</button>
       </template>
       <template #right>
+        <button
+          class="px-1 text-xs text-sub active:opacity-60"
+          aria-label="清空聊天"
+          @click="handleClearChat"
+        >
+          清空
+        </button>
         <button
           class="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full active:opacity-60"
           aria-label="AI 设置"
@@ -106,7 +164,9 @@ function openEnhance() {
     </HeaderBar>
 
     <main
+      ref="scrollRef"
       class="flex-1 overflow-y-auto bg-bg px-3 py-3"
+      @scroll.passive="updateNearBottom"
       :style="
         bgImage
           ? { backgroundImage: `url(&quot;${bgImage}&quot;)`, backgroundSize: 'cover', backgroundPosition: 'center' }
@@ -140,6 +200,31 @@ function openEnhance() {
       <div ref="bottomRef"></div>
     </main>
 
+    <Transition name="jump">
+      <button
+        v-if="showJumpDown"
+        class="absolute bottom-24 right-4 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-accent text-white text-lg shadow-lg active:opacity-70"
+        aria-label="到底部"
+        @click="onJumpDown"
+      >
+        ↓
+      </button>
+    </Transition>
+
     <Composer />
   </div>
 </template>
+
+<style scoped>
+.jump-enter-active,
+.jump-leave-active {
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+.jump-enter-from,
+.jump-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+</style>

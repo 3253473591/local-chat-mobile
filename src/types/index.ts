@@ -5,6 +5,8 @@ export interface MessageUsage {
   cost: number
   promptCacheHitTokens?: number
   promptCacheMissTokens?: number
+  /** 思维链 token 数（仅思考模式） */
+  reasoningTokens?: number
 }
 
 export interface MessageNode {
@@ -36,6 +38,7 @@ export interface Conversation {
   thinkingEnabled?: boolean // 对话级思考模式（undefined = 跟随全局）
   reasoningEffort?: string // 对话级思考深度（undefined = 跟随全局）
   temperature?: number // 对话级温度（undefined = 跟随全局）
+  topP?: number // 对话级 top_p（undefined = 跟随全局；思考模式不生效）
   pinnedAt?: number // 置顶时间（置顶对话固定排在前面）
   activePath: string[] // 当前显示路径（节点 id 序列）
   createdAt: number
@@ -68,8 +71,9 @@ export interface GlobalSettings {
   avatar: string // AI 头像
   userAvatar: string // 用户头像
   thinkingEnabled: boolean // 思考模式（思维链），默认 true
-  reasoningEffort: string // 思考深度：low / high / max（全局）
+  reasoningEffort: string // 思考深度：low / high / xhigh / max（全局）
   temperature: number | null // 温度（全局，null = 用 API 默认；思考模式下无效）
+  topP: number | null // top_p（全局，null = 用 API 默认；思考模式下无效）
   peakRule: PeakRule // 分时段计费规则
   prices: Record<string, ModelPrice>
 }

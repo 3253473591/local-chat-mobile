@@ -27,7 +27,7 @@ function pause() {
 </script>
 
 <template>
-  <div class="flex items-end gap-2 bg-white p-3 safe-bottom" style="border-top: 0.5px solid #e5e5e5">
+  <div class="safe-area-bottom flex items-end gap-2 bg-white p-3" style="border-top: 0.5px solid #e5e5e5">
     <textarea
       ref="textareaRef"
       v-model="text"
@@ -58,8 +58,4 @@ function pause() {
   </div>
 </template>
 
-<style scoped>
-.safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom);
-}
-</style>
+<style scoped></style>

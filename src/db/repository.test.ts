@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { reactive } from 'vue'
 import { db } from './index'
 import {
+  applyMessageChanges,
   deleteConversation,
   deleteMessages,
   loadConversations,
@@ -11,6 +12,7 @@ import {
   saveSettings,
   upsertNodes,
 } from './repository'
+import { deleteRound } from '../core/tree'
 import type { Conversation, GlobalSettings, MessageNode } from '../types'
 
 const conv: Conversation = {
@@ -52,6 +54,7 @@ const settings: GlobalSettings = {
   thinkingEnabled: true,
   reasoningEffort: 'high',
   temperature: null,
+  topP: null,
   peakRule: {
     enabled: false,
     multiplier: 2,
@@ -107,5 +110,39 @@ describe('repository 持久化（含响应式 Proxy 剥离）', () => {
     await deleteConversation('c1')
     expect(await loadConversations()).toHaveLength(0)
     expect(await loadMessages('c1')).toHaveLength(0)
+  })
+
+  it('deleteRound 全流程：删 U2 后重挂 U3，重新加载后 U3/A3 仍在', async () => {
+    // U1 → A1 → U2 → A2 → U3 → A3，全部写入 DB
+    const nodes: MessageNode[] = [
+      { id: 'U1', conversationId: 'c1', role: 'user', parentId: null, content: 'q1', versionIndex: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'A1', conversationId: 'c1', role: 'assistant', parentId: 'U1', content: 'a1', versionIndex: 1, createdAt: 2, updatedAt: 2 },
+      { id: 'U2', conversationId: 'c1', role: 'user', parentId: 'A1', content: 'q2', versionIndex: 1, createdAt: 3, updatedAt: 3 },
+      { id: 'A2', conversationId: 'c1', role: 'assistant', parentId: 'U2', content: 'a2', versionIndex: 1, createdAt: 4, updatedAt: 4 },
+      { id: 'U3', conversationId: 'c1', role: 'user', parentId: 'A2', content: 'q3', versionIndex: 1, createdAt: 5, updatedAt: 5 },
+      { id: 'A3', conversationId: 'c1', role: 'assistant', parentId: 'U3', content: 'a3', versionIndex: 1, createdAt: 6, updatedAt: 6 },
+    ]
+    await upsertNodes(nodes)
+
+    const original = Object.fromEntries(nodes.map((item) => [item.id, item]))
+    const after = deleteRound(original, 'U2')
+    const rehomed = Object.values(after).filter(
+      (item) => original[item.id]?.parentId !== item.parentId,
+    )
+    await applyMessageChanges(rehomed, ['U2', 'A2'])
+
+    // 重新加载：U3/A3 必须在
+    const loaded = await loadMessages('c1')
+    const map: Record<string, MessageNode> = {}
+    for (const m of loaded) map[m.id] = m
+
+    expect(map.U1).toBeDefined()
+    expect(map.A1).toBeDefined()
+    expect(map.U2).toBeUndefined()
+    expect(map.A2).toBeUndefined()
+    expect(map.U3).toBeDefined()
+    expect(map.A3).toBeDefined()
+    expect(map.U3.parentId).toBe('A1') // 重挂成功
+    expect(map.A3.parentId).toBe('U3') // 未变
   })
 })

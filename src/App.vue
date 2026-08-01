@@ -32,13 +32,11 @@ onMounted(async () => {
 
 <style scoped>
 .app-root {
-  max-width: 430px;
-  margin: 0 auto;
+  width: 100%;
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
   position: relative;
-  box-shadow: 0 0 20px rgba(0, 0, 0, 0.08);
 }
 
 .toast {

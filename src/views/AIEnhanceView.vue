@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import HeaderBar from '../components/HeaderBar.vue'
+import ImageCropper from '../components/ImageCropper.vue'
 import SettingGroup from '../components/SettingGroup.vue'
 import SettingRow from '../components/SettingRow.vue'
 import { useConversationStore } from '../stores/conversation'
@@ -19,14 +20,22 @@ const conv = computed(() => convStore.conversations.find((c) => c.id === convSto
 const thinkingChoice = ref('')
 const effortChoice = ref('')
 const tempChoice = ref('')
+const topPChoice = ref('')
 
 function loadCurrent() {
   if (!conv.value) return
   thinkingChoice.value = conv.value.thinkingEnabled === undefined ? '' : String(conv.value.thinkingEnabled)
   effortChoice.value = conv.value.reasoningEffort ?? ''
   tempChoice.value = conv.value.temperature === undefined ? '' : String(conv.value.temperature)
+  topPChoice.value = conv.value.topP === undefined ? '' : String(conv.value.topP)
 }
 loadCurrent()
+
+/** 有效思考模式（对话级优先，undefined 跟随全局）——温度/top_p 仅在关闭时可见 */
+const effectiveThinking = computed(() => {
+  const choice = conv.value?.thinkingEnabled
+  return choice === undefined ? settingsStore.settings.thinkingEnabled : choice
+})
 
 const modelOptions = computed(() => {
   const list = settingsStore.settings.models
@@ -64,20 +73,30 @@ function saveThinking() {
     thinkingEnabled: thinkingChoice.value === '' ? undefined : thinkingChoice.value === 'true',
     reasoningEffort: effortChoice.value === '' ? undefined : effortChoice.value,
     temperature: tempChoice.value === '' ? undefined : Number(tempChoice.value),
+    topP: topPChoice.value === '' ? undefined : Number(topPChoice.value),
   })
   uiStore.showToast('已保存')
 }
 
+/** 正在等待裁剪的图片（背景 9:16 / 头像 1:1） */
+const crop = ref<{ file: File; aspect: number; field: 'bgImage' | 'avatar' | 'userAvatar' } | null>(null)
+
 function onFile(evt: Event, field: 'bgImage' | 'avatar' | 'userAvatar') {
   const input = evt.target as HTMLInputElement
   const file = input.files?.[0]
-  if (!file) return
-  const reader = new FileReader()
-  reader.onload = () => {
-    void convStore.setAppearance({ [field]: String(reader.result) })
-  }
-  reader.readAsDataURL(file)
   input.value = ''
+  if (!file) return
+  crop.value = {
+    file,
+    aspect: field === 'bgImage' ? 9 / 16 : 1,
+    field,
+  }
+}
+
+function onCropConfirm(dataUrl: string) {
+  if (!crop.value) return
+  void convStore.setAppearance({ [crop.value.field]: dataUrl })
+  crop.value = null
 }
 
 function clearField(field: 'bgImage' | 'avatar' | 'userAvatar') {
@@ -128,7 +147,7 @@ function clearField(field: 'bgImage' | 'avatar' | 'userAvatar') {
             type="number"
             min="0"
             max="20"
-            class="w-20 bg-transparent py-2 text-right text-[15px] outline-none"
+            class="min-w-0 flex-1 bg-transparent py-2 text-right text-[15px] outline-none"
             @change="(e) => void convStore.setEnhance({ xRounds: Number((e.target as HTMLInputElement).value) })"
           />
         </div>
@@ -146,19 +165,37 @@ function clearField(field: 'bgImage' | 'avatar' | 'userAvatar') {
             <option value="">跟随全局</option>
             <option value="low">low</option>
             <option value="high">high</option>
+            <option value="xhigh">xhigh（pro → max）</option>
             <option value="max">max</option>
           </select>
         </div>
-        <div class="setting-row flex min-h-13 items-center gap-3 px-4">
-          <label class="shrink-0 text-[15px] text-ink">温度</label>
-          <input
-            v-model="tempChoice"
-            type="text"
-            inputmode="decimal"
-            placeholder="跟随全局"
-            class="w-24 bg-transparent py-2 text-right text-[15px] outline-none"
-            @change="saveThinking"
-          />
+        <template v-if="!effectiveThinking">
+          <div class="setting-row flex min-h-13 items-center gap-3 px-4">
+            <label class="shrink-0 text-[15px] text-ink">温度</label>
+            <input
+              v-model="tempChoice"
+              type="text"
+              inputmode="decimal"
+              placeholder="跟随全局"
+              class="min-w-0 flex-1 bg-transparent py-2 text-right text-[15px] outline-none"
+              @change="saveThinking"
+            />
+          </div>
+          <div class="setting-row flex min-h-13 items-center gap-3 px-4">
+            <label class="shrink-0 text-[15px] text-ink">top_p</label>
+            <input
+              v-model="topPChoice"
+              type="text"
+              inputmode="decimal"
+              placeholder="跟随全局（0~1）"
+              class="min-w-0 flex-1 bg-transparent py-2 text-right text-[15px] outline-none"
+              @change="saveThinking"
+            />
+          </div>
+        </template>
+        <div v-else class="setting-row flex min-h-13 items-center gap-3 px-4">
+          <span class="shrink-0 text-[15px] text-ink">温度 / top_p</span>
+          <span class="flex-1 text-right text-xs text-sub">思考模式下不生效</span>
         </div>
       </SettingGroup>
 
@@ -196,5 +233,13 @@ function clearField(field: 'bgImage' | 'avatar' | 'userAvatar') {
         </div>
       </SettingGroup>
     </main>
+
+    <ImageCropper
+      v-if="crop"
+      :file="crop.file"
+      :aspect="crop.aspect"
+      @confirm="onCropConfirm"
+      @cancel="crop = null"
+    />
   </div>
 </template>

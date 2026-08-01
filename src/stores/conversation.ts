@@ -1,11 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { streamChat } from '../api/deepseek'
+import { useUIStore } from './ui'
 import { buildMessages, applyRegex } from '../core/context'
 import { computeCost } from '../core/cost'
 import {
   childrenOf,
   collectSubtreeIds,
+  deleteRound,
   deleteSubtree as treeDeleteSubtree,
   editAssistantNode,
   editUserNode as treeEditUserNode,
@@ -29,6 +31,7 @@ const ZERO_PRICE = { in: 0, out: 0, cacheHit: 0 }
 
 export const useConversationStore = defineStore('conversation', () => {
   const settingsStore = useSettingsStore()
+  const uiStore = useUIStore()
 
   const conversations = ref<Conversation[]>([])
   const currentId = ref<string | null>(null)
@@ -204,15 +207,34 @@ export const useConversationStore = defineStore('conversation', () => {
     void persistMeta()
   }
 
-  /** 级联删除子树 */
+  /** 删除 user → 按"轮次"删除（user + AI 回复，后续接续）；删除 assistant → 级联子树 */
   async function deleteSubtree(nodeId: string) {
-    const removed = collectSubtreeIds(nodes.value, nodeId)
-    nodes.value = treeDeleteSubtree(nodes.value, nodeId)
-    const removedSet = new Set(removed)
-    activePath.value = activePath.value.filter((id) => !removedSet.has(id))
-    candidates.value = []
-    await repo.deleteMessages(removed)
-    await persistMeta()
+    const target = nodes.value[nodeId]
+    if (!target) return
+
+    if (target.role === 'user') {
+      const previousNodes = nodes.value
+      const assistants = childrenOf(nodes.value, nodeId).filter((n) => n.role === 'assistant')
+      const removed = [nodeId, ...assistants.map((a) => a.id)]
+      const removedSet = new Set(removed)
+      nodes.value = deleteRound(nodes.value, nodeId)
+      activePath.value = activePath.value.filter((id) => !removedSet.has(id))
+      candidates.value = []
+      const rehomed = Object.values(nodes.value).filter(
+        (node) => previousNodes[node.id]?.parentId !== node.parentId,
+      )
+      await repo.applyMessageChanges(rehomed, removed)
+      await persistMeta()
+    } else {
+      // assistant → 保持原级联逻辑
+      const removed = collectSubtreeIds(nodes.value, nodeId)
+      nodes.value = treeDeleteSubtree(nodes.value, nodeId)
+      const removedSet = new Set(removed)
+      activePath.value = activePath.value.filter((id) => !removedSet.has(id))
+      candidates.value = []
+      await repo.deleteMessages(removed)
+      await persistMeta()
+    }
   }
 
   /** 切换当前对话的模型（后续请求生效，历史消息费用仍按原模型单价） */
@@ -249,7 +271,7 @@ export const useConversationStore = defineStore('conversation', () => {
     config: Partial<
       Pick<
         Conversation,
-        'model' | 'prompt' | 'regex' | 'regexReplacement' | 'xRounds' | 'thinkingEnabled' | 'reasoningEffort' | 'temperature'
+        'model' | 'prompt' | 'regex' | 'regexReplacement' | 'xRounds' | 'thinkingEnabled' | 'reasoningEffort' | 'temperature' | 'topP'
       >
     >,
   ) {
@@ -269,6 +291,17 @@ export const useConversationStore = defineStore('conversation', () => {
     await repo.saveConversation(conv)
   }
 
+  /** 清空当前对话全部消息 */
+  async function clearConversation() {
+    if (!currentId.value) return
+    const allIds = Object.keys(nodes.value)
+    nodes.value = {}
+    activePath.value = []
+    candidates.value = []
+    await repo.deleteMessages(allIds)
+    await persistMeta()
+  }
+
   /** 暂停流式（保留已收部分内容） */
   function pauseStream() {
     abortController?.abort()
@@ -283,6 +316,7 @@ export const useConversationStore = defineStore('conversation', () => {
     const thinkingEnabled = conv.thinkingEnabled ?? s.thinkingEnabled
     const reasoningEffort = conv.reasoningEffort ?? s.reasoningEffort
     const temperature = conv.temperature ?? s.temperature
+    const topP = conv.topP ?? s.topP
     const asst = nodes.value[assistantId]
     const parentUser = asst?.parentId ? nodes.value[asst.parentId] : undefined
 
@@ -306,6 +340,7 @@ export const useConversationStore = defineStore('conversation', () => {
           thinking: thinkingEnabled,
           reasoningEffort,
           temperature: temperature ?? undefined,
+          topP: topP ?? undefined,
         },
         (d) => {
           const cur = nodes.value[assistantId]
@@ -334,12 +369,25 @@ export const useConversationStore = defineStore('conversation', () => {
               totalTokens: result.usage.totalTokens,
               promptCacheHitTokens: result.usage.promptCacheHitTokens,
               promptCacheMissTokens: result.usage.promptCacheMissTokens,
+              reasoningTokens: result.usage.reasoningTokens,
               cost: computeCost(result.usage, s.prices[model] ?? ZERO_PRICE, s.peakRule, new Date(cur.createdAt)),
             }
           : undefined,
         updatedAt: Date.now(),
       }
       nodes.value[assistantId] = finalNode
+      // 截断/过滤类 finish_reason：toast 提示用户
+      if (result.finishReason) {
+        const hint =
+          result.finishReason === 'insufficient_system_resource'
+            ? '响应被截断（服务器资源不足），可重试'
+            : result.finishReason === 'length'
+              ? '输出超过长度限制，回复不完整'
+              : result.finishReason === 'content_filter'
+                ? '内容被过滤，回复不完整'
+                : ''
+        if (hint) uiStore.showToast(hint, 3000)
+      }
       await repo.upsertNodes([finalNode])
       await persistMeta()
     } catch (e) {
@@ -386,6 +434,7 @@ export const useConversationStore = defineStore('conversation', () => {
     togglePin,
     setEnhance,
     setAppearance,
+    clearConversation,
     pauseStream,
   }
 })

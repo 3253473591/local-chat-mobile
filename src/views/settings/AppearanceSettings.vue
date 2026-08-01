@@ -1,20 +1,31 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import HeaderBar from '../../components/HeaderBar.vue'
+import ImageCropper from '../../components/ImageCropper.vue'
 import SettingGroup from '../../components/SettingGroup.vue'
 import { useSettingsStore } from '../../stores/settings'
 
 const settingsStore = useSettingsStore()
 
+/** 正在等待裁剪的图片（背景 9:16 / 头像 1:1） */
+const crop = ref<{ file: File; aspect: number; field: 'bgImage' | 'avatar' | 'userAvatar' } | null>(null)
+
 function onFile(evt: Event, field: 'bgImage' | 'avatar' | 'userAvatar') {
   const input = evt.target as HTMLInputElement
   const file = input.files?.[0]
-  if (!file) return
-  const reader = new FileReader()
-  reader.onload = () => {
-    settingsStore.settings[field] = String(reader.result)
-  }
-  reader.readAsDataURL(file)
   input.value = ''
+  if (!file) return
+  crop.value = {
+    file,
+    aspect: field === 'bgImage' ? 9 / 16 : 1,
+    field,
+  }
+}
+
+function onCropConfirm(dataUrl: string) {
+  if (!crop.value) return
+  settingsStore.settings[crop.value.field] = dataUrl
+  crop.value = null
 }
 
 function clearField(field: 'bgImage' | 'avatar' | 'userAvatar') {
@@ -64,8 +75,16 @@ function clearField(field: 'bgImage' | 'avatar' | 'userAvatar') {
       </SettingGroup>
 
       <div class="px-4 py-4 text-xs text-sub">
-        头像与背景为全局默认；单个对话可在对话页右上角 AI 头像处单独覆盖
+        头像与背景为全局默认；单个对话可在对话页右上角 AI 头像处单独覆盖。上传后需裁剪（头像 1:1、背景 9:16）。
       </div>
     </main>
+
+    <ImageCropper
+      v-if="crop"
+      :file="crop.file"
+      :aspect="crop.aspect"
+      @confirm="onCropConfirm"
+      @cancel="crop = null"
+    />
   </div>
 </template>

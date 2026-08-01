@@ -120,7 +120,7 @@ function onCtxMenu(e: MouseEvent, id: string) {
       </div>
     </main>
 
-    <nav class="flex h-14 shrink-0 items-stretch bg-white safe-bottom" style="border-top: 0.5px solid #e5e5e5">
+    <nav class="safe-area-bottom flex h-14 shrink-0 items-stretch bg-white" style="border-top: 0.5px solid #e5e5e5">
       <RouterLink
         to="/"
         class="flex flex-1 flex-col items-center justify-center gap-0.5 text-xs"
@@ -142,8 +142,4 @@ function onCtxMenu(e: MouseEvent, id: string) {
   </div>
 </template>
 
-<style scoped>
-.safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom);
-}
-</style>
+<style scoped></style>

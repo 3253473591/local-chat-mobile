@@ -19,8 +19,9 @@ const DEFAULT_SETTINGS: GlobalSettings = {
   thinkingEnabled: true,
   reasoningEffort: 'high',
   temperature: null,
+  topP: null,
   peakRule: {
-    enabled: false,
+    enabled: true,
     multiplier: 2,
     peaks: [
       { start: '09:00', end: '12:00' },

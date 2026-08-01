@@ -49,6 +49,22 @@ export async function deleteMessages(ids: string[]): Promise<void> {
   await db.messages.bulkDelete(ids)
 }
 
+/** 在同一事务中保存重挂节点并删除旧节点，避免对话树只完成一半更新。 */
+export async function applyMessageChanges(
+  upserts: MessageNode[],
+  deletedIds: string[],
+): Promise<void> {
+  if (upserts.length === 0 && deletedIds.length === 0) return
+  await db.transaction('rw', db.messages, async () => {
+    if (upserts.length > 0) {
+      await db.messages.bulkPut(upserts.map((node) => toPlain(node)))
+    }
+    if (deletedIds.length > 0) {
+      await db.messages.bulkDelete(deletedIds)
+    }
+  })
+}
+
 export async function loadSettings(): Promise<GlobalSettings | null> {
   const row = await db.settings.get(SETTINGS_KEY)
   if (!row) return null

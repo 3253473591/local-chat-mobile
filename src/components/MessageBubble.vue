@@ -102,7 +102,11 @@ function editAssistant() {
 }
 
 function confirmDelete() {
-  if (window.confirm('删除该消息及其全部后续分支？')) {
+  const msg =
+    props.node.role === 'user'
+      ? '删除此消息及其 AI 回复，后续对话将向上接续（不会丢失）'
+      : '删除该 AI 回复及其全部后续对话'
+  if (window.confirm(msg)) {
     void convStore.deleteSubtree(props.node.id)
   }
 }

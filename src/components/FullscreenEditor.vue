@@ -30,9 +30,9 @@ function confirm() {
 
 <template>
   <Teleport to="body">
-    <div v-if="ui.editor.visible" class="fixed inset-0 z-50 flex flex-col bg-white">
+    <div v-if="ui.editor.visible" class="safe-area-x fixed inset-0 z-50 flex flex-col bg-white">
       <!-- 顶栏 -->
-      <header class="flex h-12 shrink-0 items-center justify-between px-4 safe-top">
+      <header class="safe-area-top flex h-12 shrink-0 items-center justify-between px-4">
         <button class="text-xl text-sub active:opacity-60" aria-label="关闭" @click="ui.closeEditor()">
           ✕
         </button>
@@ -41,7 +41,7 @@ function confirm() {
       </header>
 
       <!-- 正文 -->
-      <main class="flex min-h-0 flex-1 flex-col">
+      <main class="safe-area-bottom flex min-h-0 flex-1 flex-col">
         <textarea
           v-model="text"
           class="min-h-0 flex-1 resize-none bg-bg p-4 text-sm outline-none"
@@ -78,8 +78,4 @@ function confirm() {
   </Teleport>
 </template>
 
-<style scoped>
-.safe-top {
-  padding-top: env(safe-area-inset-top);
-}
-</style>
+<style scoped></style>
