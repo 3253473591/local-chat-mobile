@@ -32,7 +32,7 @@ function confirm() {
   <Teleport to="body">
     <div v-if="ui.editor.visible" class="safe-area-x fixed inset-0 z-50 flex flex-col bg-white">
       <!-- 顶栏 -->
-      <header class="safe-area-top flex h-14 shrink-0 items-center justify-between px-4">
+      <header class="safe-area-top flex h-18 shrink-0 items-center justify-between px-4">
         <button class="text-xl text-sub active:opacity-60" aria-label="关闭" @click="ui.closeEditor()">
           ✕
         </button>

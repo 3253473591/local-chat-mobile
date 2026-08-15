@@ -242,7 +242,7 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <div class="fixed inset-0 z-50 flex flex-col bg-black" style="overscroll-behavior: none">
       <!-- 顶栏 -->
-      <header class="safe-area-top flex h-14 shrink-0 items-center justify-between px-4">
+      <header class="safe-area-top flex h-18 shrink-0 items-center justify-between px-4">
         <button class="text-xl text-white/70 active:opacity-60" aria-label="取消" :disabled="processing" @click="emit('cancel')">✕</button>
         <span class="text-[15px] font-medium text-white">{{ props.aspect >= 1 ? '裁剪头像（1:1）' : '裁剪背景（9:16）' }}</span>
         <button class="text-[17px] text-accent active:opacity-60" :disabled="processing" @click="onConfirm">

@@ -7,7 +7,7 @@ defineProps<{ title?: string; backTo?: string }>()
 
 <template>
   <header
-    class="safe-area-top safe-area-x relative flex h-14 shrink-0 items-center bg-white px-3"
+    class="safe-area-top safe-area-x relative flex h-18 shrink-0 items-center bg-white px-3"
     style="border-bottom: 0.5px solid #e5e5e5"
   >
     <div class="flex flex-1 items-center justify-start">
